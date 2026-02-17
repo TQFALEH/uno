@@ -4,13 +4,25 @@ import { useGSAP } from '@gsap/react'
 import { canPlayerPlayAnyCard, isCardPlayable } from './engine'
 import { GameTable } from './components/GameTable'
 import { useGameStore } from './store/useGameStore'
+import { sfx } from './audio/sfx'
 
 gsap.registerPlugin(useGSAP)
+
+type SfxSnapshot = {
+  topCardId: string | null
+  turnIndex: number
+  phase: string
+  drawnCardId: string | null
+  invalidMoveKey: string | null
+  unoWindowKey: string | null
+}
 
 function App() {
   const [playerCount, setPlayerCount] = useState<2 | 3 | 4>(4)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [soundEnabled, setSoundEnabled] = useState(true)
   const rootRef = useRef<HTMLElement>(null)
+  const prevRef = useRef<SfxSnapshot | null>(null)
 
   const { state, startGame, playCard, drawCard, passAfterDraw, callUno, chooseWildColor, tick, updateConfig } = useGameStore()
 
@@ -22,6 +34,10 @@ function App() {
       startGame(playerCount)
     }
   }, [playerCount, startGame, state.phase])
+
+  useEffect(() => {
+    sfx.setEnabled(soundEnabled)
+  }, [soundEnabled])
 
   useGSAP(
     () => {
@@ -57,7 +73,14 @@ function App() {
   }, [tick])
 
   useEffect(() => {
+    const unlock = () => sfx.unlock()
+    window.addEventListener('pointerdown', unlock)
+    return () => window.removeEventListener('pointerdown', unlock)
+  }, [])
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      sfx.unlock()
       if (state.phase !== 'inProgress') return
       if (!activePlayer) return
       const key = event.key.toLowerCase()
@@ -93,6 +116,44 @@ function App() {
     state.turnIndex,
     state.unoWindow,
   ])
+
+  useEffect(() => {
+    const topCardId = state.discardPile[state.discardPile.length - 1]?.id ?? null
+    const invalidMoveKey = state.lastInvalidMove
+      ? `${state.lastInvalidMove.playerIndex}-${state.lastInvalidMove.cardId}`
+      : null
+    const unoWindowKey = state.unoWindow ? `${state.unoWindow.playerIndex}-${state.unoWindow.deadlineAt}` : null
+
+    if (prevRef.current) {
+      if (topCardId && topCardId !== prevRef.current.topCardId) {
+        sfx.play('cardPlay')
+      }
+      if (state.drawnCardId && state.drawnCardId !== prevRef.current.drawnCardId) {
+        sfx.play('draw')
+      }
+      if (invalidMoveKey && invalidMoveKey !== prevRef.current.invalidMoveKey) {
+        sfx.play('invalid')
+      }
+      if (unoWindowKey && unoWindowKey !== prevRef.current.unoWindowKey) {
+        sfx.play('uno')
+      }
+      if (state.turnIndex !== prevRef.current.turnIndex && state.phase === 'inProgress') {
+        sfx.play('turn')
+      }
+      if (state.phase === 'gameOver' && prevRef.current.phase !== 'gameOver') {
+        sfx.play('win')
+      }
+    }
+
+    prevRef.current = {
+      topCardId,
+      turnIndex: state.turnIndex,
+      phase: state.phase,
+      drawnCardId: state.drawnCardId,
+      invalidMoveKey,
+      unoWindowKey,
+    }
+  }, [state])
 
   return (
     <main ref={rootRef} className="app-shell" dir="ltr" lang="en">
@@ -134,6 +195,10 @@ function App() {
                 onChange={(e) => updateConfig({ drawThenPlayAllowed: e.target.checked })}
               />
               Allow playing drawn card
+            </label>
+            <label className="switch-row">
+              <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
+              Sound effects
             </label>
             <div className="settings-actions">
               <button
